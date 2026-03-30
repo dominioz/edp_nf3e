@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant
@@ -17,12 +18,15 @@ from .const import (
     CONF_UCS,
     DEFAULT_DAYS,
 )
+
 from .util import (
     connect_imap,
     search_recent_emails,
     extract_xml_from_email,
     extract_uc_from_xml,
     parse_nf3e,
+    save_last_xml,
+    load_last_xml,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,18 +67,23 @@ class EdpNf3eCoordinator(DataUpdateCoordinator):
         """Processa todas as UCs monitoradas."""
         _LOGGER.debug("Iniciando atualização das UCs: %s", self.ucs)
 
+        # Inicializa cache mantendo dados antigos
+        if not self.data_by_uc:
+            self.data_by_uc = {uc: None for uc in self.ucs}
+
+        # Tenta conectar ao IMAP
         try:
             mail = connect_imap(self.server, self.email, self.password, self.folder)
         except Exception as e:
             _LOGGER.error("Erro ao conectar ao IMAP: %s", e)
-            raise
+            return self.data_by_uc  # mantém dados antigos
 
         try:
             email_ids = search_recent_emails(mail, self.remetente, DEFAULT_DAYS)
             _LOGGER.debug("E-mails encontrados: %s", email_ids)
 
-            # Limpa cache
-            self.data_by_uc = {uc: None for uc in self.ucs}
+            # Prepara estrutura para novos dados
+            new_data = {uc: None for uc in self.ucs}
 
             # Varre e-mails do mais recente para o mais antigo
             for email_id in reversed(email_ids):
@@ -87,17 +96,41 @@ class EdpNf3eCoordinator(DataUpdateCoordinator):
                     continue
 
                 # Se já temos dados dessa UC, ignoramos (queremos o mais recente)
-                if self.data_by_uc.get(uc):
+                if new_data.get(uc):
                     continue
+
+                # Salva XML persistente por UC
+                xml_path = f"{self.hass.config.path()}/custom_components/{DOMAIN}/last_xml/{uc}.xml"
+                save_last_xml(xml_text, xml_path)
 
                 # Parse completo
                 parsed = parse_nf3e(xml_text)
-                self.data_by_uc[uc] = parsed
+                new_data[uc] = parsed
 
+            # Agora tratamos UCs sem e-mail novo
+            for uc in self.ucs:
+                if new_data[uc] is None:
+                    # Tenta carregar XML persistido
+                    xml_path = f"{self.hass.config.path()}/custom_components/{DOMAIN}/last_xml/{uc}.xml"
+                    xml_text = load_last_xml(xml_path)
+
+                    if xml_text:
+                        try:
+                            parsed = parse_nf3e(xml_text)
+                            new_data[uc] = parsed
+                        except Exception as err:
+                            _LOGGER.error("Erro ao parsear XML salvo da UC %s: %s", uc, err)
+                            new_data[uc] = self.data_by_uc.get(uc)  # mantém dados antigos
+                    else:
+                        # Sem XML salvo → mantém dados antigos
+                        new_data[uc] = self.data_by_uc.get(uc)
+
+            # Atualiza cache
+            self.data_by_uc = new_data
             return self.data_by_uc
 
         finally:
             try:
                 mail.logout()
-            except:
+            except Exception:
                 pass

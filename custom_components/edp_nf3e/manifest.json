@@ -4,11 +4,11 @@
   "version": "1.0.0",
   "documentation": "https://github.com/dominioz/edp_nf3e",
   "requirements": [],
-  "codeowners": ["@alevilla"],
+  "codeowners": ["@dominioz"],
   "config_flow": true,
   "iot_class": "cloud_polling",
   "integration_type": "hub",
   "loggers": ["custom_components.edp_nf3e"],
-  "icon": "icons/icon.png",
-  "logo": "icons/logo.png"
+  "icon": "/config/custom_components/edp_nf3e/icons/icon.png",
+  "logo": "/config/custom_components/edp_nf3e/icons/logo.png"
 }
