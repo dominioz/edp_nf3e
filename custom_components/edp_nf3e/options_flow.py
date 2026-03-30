@@ -43,7 +43,7 @@ class EdpNf3eOptionsFlow(config_entries.OptionsFlow):
             if not ucs:
                 errors["base"] = "no_uc_selected"
             else:
-                # Salva opções
+                # Salva SOMENTE OPTIONS (não sobrescreve entry.data)
                 return self.async_create_entry(
                     title="",
                     data={
@@ -54,9 +54,9 @@ class EdpNf3eOptionsFlow(config_entries.OptionsFlow):
                 )
 
         # Valores atuais
-        current_folder = self.entry.data.get(CONF_FOLDER)
-        current_remetente = self.entry.data.get(CONF_REMETENTE)
-        current_ucs = self.entry.data.get(CONF_UCS, [])
+        current_folder = self.entry.options.get(CONF_FOLDER, self.entry.data.get(CONF_FOLDER))
+        current_remetente = self.entry.options.get(CONF_REMETENTE, self.entry.data.get(CONF_REMETENTE))
+        current_ucs = self.entry.options.get(CONF_UCS, self.entry.data.get(CONF_UCS, []))
 
         schema = vol.Schema(
             {
