@@ -1,6 +1,6 @@
 import logging
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import CURRENCY_REAL
+from homeassistant.const import UnitOfCurrency
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
@@ -28,7 +28,7 @@ class EdpNf3eSensor(CoordinatorEntity, SensorEntity):
         self._uc = uc
         self._attr_name = f"EDP NF3e {uc}"
         self._attr_unique_id = f"{DOMAIN}_{uc}"
-        self._attr_native_unit_of_measurement = CURRENCY_REAL
+        self._attr_native_unit_of_measurement = UnitOfCurrency.REAL
 
     @property
     def available(self):
