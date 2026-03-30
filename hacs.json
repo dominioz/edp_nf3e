@@ -1,0 +1,8 @@
+{
+  "name": "EDP NF3e",
+  "content_in_root": false,
+  "domain": "edp_nf3e",
+  "country": "BR",
+  "homeassistant": "2024.0.0",
+  "render_readme": true
+}
