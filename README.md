@@ -190,6 +190,3 @@ Atributos incluem:
 Desenvolvido por **Alexandre Pires Avila** (ale.avilla@dominioz.com.br).
 
 
-# 📜 Licença
-
-MIT License.
