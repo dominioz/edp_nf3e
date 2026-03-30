@@ -44,7 +44,7 @@ class EdpNf3eCoordinator(DataUpdateCoordinator):
         self.password = config_entry.data[CONF_PASSWORD]
         self.folder = config_entry.data.get(CONF_FOLDER)
         self.remetente = config_entry.data.get(CONF_REMETENTE)
-        self.ucs = config_entry.data.get(CONF_UCS, [])
+        self.ucs = config_entry.options.get(CONF_UCS, config_entry.data.get(CONF_UCS, []))
 
         super().__init__(
             hass,
