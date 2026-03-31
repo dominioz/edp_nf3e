@@ -10,30 +10,24 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Configura a integração EDP NF3e."""
-    email = entry.data.get("email")
-    _LOGGER.info("Iniciando integração EDP NF3e para %s", email)
-
-    hass.data.setdefault(DOMAIN, {})
 
     coordinator = EdpNf3eCoordinator(hass, entry)
 
     # Primeira atualização obrigatória
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data[DOMAIN][entry.entry_id] = {
-        "coordinator": coordinator
-    }
+    # Salva o coordinator corretamente
+    hass.data.setdefault(DOMAIN, {})
+    hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # Carrega a plataforma sensor
+    # NOVO MÉTODO — compatível com HA 2023–2026
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Descarrega a integração."""
-    _LOGGER.info("Descarregando integração EDP NF3e (%s)", entry.entry_id)
-
+    """Desinstala a integração."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
 
     if unload_ok:

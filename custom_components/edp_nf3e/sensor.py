@@ -31,21 +31,26 @@ class EdpNf3eSensor(CoordinatorEntity, SensorEntity):
         self._attr_native_unit_of_measurement = unit
 
     @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, f"edp_nf3e_{self.uc}")},
+            "name": f"EDP NF3e {self.uc}",
+            "manufacturer": "EDP",
+            "model": "NF3e",
+        }
+
+    @property
     def native_value(self):
-        """Retorna o valor do sensor."""
         data = self.coordinator.data.get(self.uc)
 
-        # Se não há dados → sensor fica unknown
         if not data:
             return None
 
         value = data.get(self.key)
 
-        # Datas e strings retornam direto
         if isinstance(value, str):
             return value
 
-        # Números convertidos corretamente
         try:
             return round(float(value), 4)
         except:
@@ -53,7 +58,6 @@ class EdpNf3eSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        """Atributos extras úteis."""
         data = self.coordinator.data.get(self.uc)
         if not data:
             return {}

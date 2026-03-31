@@ -33,9 +33,9 @@ SENSOR_TYPES = {
     "iluminacao_publica": ["Iluminação Pública", "R$"],
     "compensacoes": ["Compensações", "R$"],
 
-    "saldo_credito_anterior": ["Crédito Anterior", "R$"],
-    "credito_expirado": ["Crédito Expirado", "R$"],
-    "saldo_credito_atual": ["Crédito Atual", "R$"],
+    "saldo_credito_anterior": ["Crédito Anterior", "kWh"],
+    "credito_expirado": ["Crédito Expirado", "kWh"],
+    "saldo_credito_atual": ["Crédito Atual", "kWh"],
 
     "data_vencimento": ["Data de Vencimento", None],
     "ultima_leitura": ["Última Leitura", None],

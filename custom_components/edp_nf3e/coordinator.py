@@ -112,8 +112,8 @@ class EdpNf3eCoordinator(DataUpdateCoordinator):
             # Tarifas reais (vItem)
             dados["consumo_tusd"] = float(self._get(root, ".//n:vItem", ns, item="CONSUMO TUSD"))
             dados["consumo_te"] = float(self._get(root, ".//n:vItem", ns, item="CONSUMO TE"))
-            dados["injetada_tusd"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA TUSD"))
-            dados["injetada_te"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA TE"))
+            dados["injetada_tusd"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA|TUSD"))
+            dados["injetada_te"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA|TE"))
 
             # Tarifas totais
             dados["tarifa_consumo"] = dados["consumo_tusd"] + dados["consumo_te"]
@@ -148,10 +148,23 @@ class EdpNf3eCoordinator(DataUpdateCoordinator):
         if item:
             for det in root.findall(".//n:det", ns):
                 xprod = det.find(".//n:xProd", ns)
-                if xprod is not None and item.upper() in xprod.text.upper():
-                    val = det.find(path.replace(".//n:", ".//n:"), ns)
+                if xprod is None:
+                    continue
+
+                texto = xprod.text.upper()
+
+                # Critérios múltiplos (robusto)
+                ok = True
+                for termo in item.upper().split("|"):
+                    if termo.strip() not in texto:
+                        ok = False
+                        break
+
+                if ok:
+                    val = det.find(path, ns)
                     if val is not None:
                         return val.text
+
             return "0"
 
         node = root.find(path, ns)
