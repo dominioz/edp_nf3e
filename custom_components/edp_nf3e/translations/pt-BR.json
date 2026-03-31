@@ -3,8 +3,8 @@
   "config": {
     "step": {
       "user": {
-        "title": "Configurar IMAP",
-        "description": "Informe os dados de acesso ao e-mail onde você recebe as NF3e da EDP.",
+        "title": "Configuração IMAP",
+        "description": "Informe os dados de acesso ao servidor de e-mail onde chegam as NF3e.",
         "data": {
           "imap_server": "Servidor IMAP",
           "email": "E-mail",
@@ -14,17 +14,17 @@
         }
       },
       "select_ucs": {
-        "title": "Selecionar UCs",
-        "description": "Foram detectadas as seguintes UCs nos últimos 90 dias. Selecione as que deseja monitorar ou adicione uma UC manualmente.",
+        "title": "Selecione as Unidades Consumidoras",
+        "description": "As UCs foram detectadas automaticamente. Você pode adicionar outras manualmente.",
         "data": {
-          "ucs": "UCs detectadas",
+          "ucs": "Unidades Consumidoras",
           "extra_uc": "Adicionar UC manualmente"
         }
       }
     },
     "error": {
-      "imap_error": "Não foi possível conectar ao servidor IMAP.",
-      "invalid_uc": "UC inválida. Informe apenas números.",
+      "imap_error": "Erro ao conectar ao servidor IMAP.",
+      "invalid_uc": "UC inválida. Deve conter apenas números.",
       "no_uc_selected": "Selecione pelo menos uma UC."
     }
   },
@@ -32,18 +32,18 @@
     "step": {
       "init": {
         "title": "Opções da Integração",
-        "description": "Ajuste as configurações e gerencie as UCs monitoradas.",
+        "description": "Ajuste as configurações da integração.",
         "data": {
           "folder": "Pasta IMAP",
           "remetente": "Remetente (EDP)",
-          "ucs": "UCs monitoradas",
+          "ucs": "Unidades Consumidoras",
           "extra_uc": "Adicionar UC manualmente"
         }
       }
     },
     "error": {
       "invalid_uc": "UC inválida.",
-      "no_uc_selected": "Selecione pelo menos uma UC."
+      "no_uc_selected": "Selecione ao menos uma UC."
     }
   }
 }

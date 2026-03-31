@@ -1,14 +1,16 @@
 {
   "domain": "edp_nf3e",
   "name": "EDP NF3e",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "documentation": "https://github.com/dominioz/edp_nf3e",
   "requirements": [],
-  "codeowners": ["@alevilla"],
-  "config_flow": true,
+  "dependencies": [],
+  "codeowners": ["@dominioz"],
   "iot_class": "cloud_polling",
-  "integration_type": "hub",
+  "integration_type": "service",
   "loggers": ["custom_components.edp_nf3e"],
+  "config_flow": true,
   "icon": "icons/icon.png",
-  "logo": "icons/logo.png"
+  "logo": "icons/logo.png",
+  "platforms": ["sensor"]
 }

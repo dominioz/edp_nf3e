@@ -1,220 +1,207 @@
 import imaplib
 import email
-from email.header import decode_header
+import logging
+import re
 from datetime import datetime, timedelta
-import xml.etree.ElementTree as ET
+from xml.etree import ElementTree as ET
 
-from .const import DEFAULT_DAYS
-
-NS = {"n": "http://www.portalfiscal.inf.br/nf3e"}
+_LOGGER = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------
-# 🔧 Normalização da UC
+# IMAP
 # ---------------------------------------------------------
-def normalize_uc(raw: str) -> str:
-    """Remove tudo que não for número e zeros à esquerda."""
-    if not raw:
-        return None
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    return digits.lstrip("0") or digits
-
-
-# ---------------------------------------------------------
-# 📬 Conexão IMAP
-# ---------------------------------------------------------
-def connect_imap(server: str, user: str, password: str, folder: str):
-    """Conecta ao servidor IMAP e seleciona a pasta."""
+def connect_imap(server, user, password, folder):
+    """Conecta ao servidor IMAP."""
     mail = imaplib.IMAP4_SSL(server)
     mail.login(user, password)
-    mail.select(f'"{folder}"')
+    mail.select(folder)
     return mail
 
 
-# ---------------------------------------------------------
-# 📬 Busca e-mails dos últimos N dias
-# ---------------------------------------------------------
-def search_recent_emails(mail, remetente: str, days: int = DEFAULT_DAYS):
-    """Busca e-mails do remetente nos últimos N dias."""
-    date_limit = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
-    query = f'(FROM "{remetente}" SINCE {date_limit})'
+def search_recent_emails(mail, remetente, days):
+    """Busca e-mails recentes do remetente especificado."""
+    date = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+    criteria = f'(SINCE "{date}" FROM "{remetente}")'
+    result, data = mail.search(None, criteria)
 
-    status, data = mail.search(None, query)
-    if status != "OK":
+    if result != "OK":
         return []
 
-    ids = data[0].split()
-    return ids
+    return data[0].split()
 
 
-# ---------------------------------------------------------
-# 📎 Extrai XML de um e-mail
-# ---------------------------------------------------------
 def extract_xml_from_email(mail, email_id):
-    """Extrai o XML de um e-mail, ignorando PDFs e outros anexos."""
-    status, data = mail.fetch(email_id, "(RFC822)")
-    if status != "OK":
+    """Extrai o XML NF3e do e-mail."""
+    result, data = mail.fetch(email_id, "(RFC822)")
+    if result != "OK":
         return None
 
     msg = email.message_from_bytes(data[0][1])
 
     for part in msg.walk():
-        filename = part.get_filename()
-        content_type = part.get_content_type()
-
-        # Decodifica nome do arquivo
-        if filename:
-            decoded, enc = decode_header(filename)[0]
-            if isinstance(decoded, bytes):
-                decoded = decoded.decode(enc or "utf-8", errors="ignore")
-        else:
-            decoded = ""
-
-        # Ignorar PDFs
-        if decoded.lower().endswith(".pdf") or content_type == "application/pdf":
-            continue
-
-        # Detectar XML mesmo com content-type errado
-        is_xml = (
-            decoded.lower().endswith(".xml")
-            or content_type in ["application/xml", "text/xml"]
-            or "xml" in content_type
-        )
-
-        if not is_xml:
-            continue
-
-        xml_bytes = part.get_payload(decode=True)
-        if not xml_bytes:
-            continue
-
-        try:
-            return xml_bytes.decode("utf-8", errors="ignore")
-        except:
-            try:
-                return xml_bytes.decode("latin-1", errors="ignore")
-            except:
-                continue
+        if part.get_content_type() in ["application/xml", "text/xml"]:
+            return part.get_payload(decode=True).decode("utf-8")
 
     return None
 
 
 # ---------------------------------------------------------
-# 📄 Lê UC do XML (modo rápido)
+# PARSER NF3e
 # ---------------------------------------------------------
-def extract_uc_from_xml(xml_text: str):
-    """Extrai apenas a UC do XML, sem processar o resto."""
-    try:
-        root = ET.fromstring(xml_text)
-        id_acesso = root.find(".//n:acessante/n:idAcesso", NS)
-        if id_acesso is not None and id_acesso.text:
-            return normalize_uc(id_acesso.text)
-    except Exception:
-        pass
-    return None
+def parse_nf3e(xml_text):
+    """
+    Parser completo da NF3e.
 
+    Agora usando:
+    - <vItem> como tarifa real (com impostos)
+    - identificação precisa de TUSD/TE consumo e injetada
+    - extração de créditos GD
+    """
 
-# ---------------------------------------------------------
-# 📊 Parser completo da NF3e
-# ---------------------------------------------------------
-def parse_nf3e(xml_text: str):
-    """Extrai todos os dados relevantes da NF3e e retorna JSON estruturado."""
+    ns = {"n": "http://www.portalfiscal.inf.br/nf3e"}
     root = ET.fromstring(xml_text)
 
-    # UC
-    id_acesso = root.find(".//n:acessante/n:idAcesso", NS)
-    uc = normalize_uc(id_acesso.text) if id_acesso is not None else None
+    # -----------------------------
+    # Valores iniciais
+    # -----------------------------
+    consumo_tusd = 0.0
+    consumo_te = 0.0
+    injetada_tusd = 0.0
+    injetada_te = 0.0
 
-    # Valor total
-    vnf_elem = root.find(".//n:total/n:vNF", NS)
-    valor_total = float(vnf_elem.text) if vnf_elem is not None else 0.0
-
-    # Datas
-    venc_elem = root.find(".//n:gFat/n:dVencFat", NS)
-    ultima_elem = root.find(".//n:gMed/n:dMedAtu", NS)
-    prox_elem = root.find(".//n:gFat/n:dProxLeitura", NS)
-
-    data_venc = venc_elem.text if venc_elem is not None else None
-    ultima_leitura = ultima_elem.text if ultima_elem is not None else None
-    proxima_leitura = prox_elem.text if prox_elem is not None else None
-
-    # Competência atual
-    compet_elem = root.find(".//n:gFat/n:CompetFat", NS)
-    competencia = compet_elem.text if compet_elem is not None else None
-
-    # Dias no período
-    dias_periodo = None
-    for g in root.findall(".//n:gANEEL/n:gHistFat/n:gGrandFat", NS):
-        comp = g.find("n:CompetFat", NS)
-        dias = g.find("n:qtdDias", NS)
-        if comp is not None and dias is not None and comp.text == competencia:
-            try:
-                dias_periodo = int(dias.text)
-            except:
-                dias_periodo = None
-            break
-
-    # Energia e valores
     energia_consumida = 0.0
     energia_injetada = 0.0
-    te_tusd_valor = 0.0
+
+    valor_bandeiras = 0.0
     iluminacao_publica = 0.0
     compensacoes = 0.0
-    bandeiras_valor = 0.0  # não identificado nos XMLs enviados
 
-    for det in root.findall(".//n:NFdet/n:det", NS):
-        xprod = det.find(".//n:detItem/n:prod/n:xProd", NS)
-        q = det.find(".//n:detItem/n:prod/n:qFaturada", NS)
-        vprod = det.find(".//n:detItem/n:prod/n:vProd", NS)
-        cprod = det.find(".//n:detItem/n:prod/n:cProd", NS)
+    # -----------------------------
+    # Leitura de datas
+    # -----------------------------
+    dMedAnt = None
+    dMedAtu = None
+    dProxLeitura = None
+    data_vencimento = None
 
-        xprod = xprod.text.upper() if xprod is not None and xprod.text else ""
-        q = float(q.text) if q is not None and q.text else 0.0
-        vprod = float(vprod.text) if vprod is not None and vprod.text else 0.0
-        cprod = cprod.text if cprod is not None else ""
+    # -----------------------------
+    # Créditos GD
+    # -----------------------------
+    saldo_credito_anterior = 0.0
+    credito_expirado = 0.0
+    saldo_credito_atual = 0.0
 
-        if "CONSUMO" in xprod and "INJETADA" not in xprod:
-            energia_consumida += q
-            te_tusd_valor += vprod
+    # -----------------------------
+    # Extrai créditos GD
+    # -----------------------------
+    gSaldo = root.find(".//n:gSaldoCred", ns)
+    if gSaldo is not None:
+        saldo_credito_anterior = float(gSaldo.findtext("n:vSaldAnt", "0", ns))
+        credito_expirado = float(gSaldo.findtext("n:vCredExpirado", "0", ns))
+        saldo_credito_atual = float(gSaldo.findtext("n:vSaldAtual", "0", ns))
 
-        if "INJETADA" in xprod:
-            energia_injetada += q
+    # -----------------------------
+    # Extrai datas
+    # -----------------------------
+    dMedAnt = root.findtext(".//n:gMed/n:dMedAnt", None, ns)
+    dMedAtu = root.findtext(".//n:gMed/n:dMedAtu", None, ns)
+    dProxLeitura = root.findtext(".//n:gFat/n:dProxLeitura", None, ns)
+    data_vencimento = root.findtext(".//n:gFat/n:dVencFat", None, ns)
 
-        if "ILUMINAÇÃO PÚBLICA" in xprod:
-            iluminacao_publica += vprod
+    # -----------------------------
+    # Processa itens da NF3e
+    # -----------------------------
+    for det in root.findall(".//n:det", ns):
+        xProd = det.findtext(".//n:xProd", "", ns).upper()
+        vItem = float(det.findtext(".//n:vItem", "0", ns))
+        qFaturada = float(det.findtext(".//n:qFaturada", "0", ns))
 
-        if cprod == "ACCMNT" or "DEDUÇÕES E COMPENSAÇÕES" in xprod:
-            compensacoes += vprod
+        # Energia consumida
+        if "CONSUMO TUSD" in xProd:
+            consumo_tusd = vItem
+            energia_consumida = qFaturada
 
-    # Tarifas
-    tarifa_base = te_tusd_valor / energia_consumida if energia_consumida else 0
-    tarifa_real = (te_tusd_valor + bandeiras_valor) / energia_consumida if energia_consumida else 0
-    tarifa_paga = valor_total / energia_consumida if energia_consumida else 0
+        elif "CONSUMO TE" in xProd:
+            consumo_te = vItem
 
-    dias_bandeira = dias_periodo  # sem info específica
+        # Energia injetada
+        elif "INJETADA" in xProd and "TUSD" in xProd:
+            injetada_tusd = vItem
+            energia_injetada = qFaturada
 
+        elif "INJETADA" in xProd and "TE" in xProd:
+            injetada_te = vItem
+
+        # Outros valores
+        elif "ILUMINAÇÃO" in xProd:
+            iluminacao_publica += vItem
+
+        elif "BANDEIRA" in xProd:
+            valor_bandeiras += vItem
+
+        elif "COMPENSAÇÃO" in xProd or "DEDUÇÃO" in xProd:
+            compensacoes += vItem
+
+    # -----------------------------
+    # Tarifas reais
+    # -----------------------------
+    tarifa_consumo = consumo_tusd + consumo_te
+    tarifa_geracao = injetada_tusd + injetada_te
+
+    # -----------------------------
+    # Valores totais
+    # -----------------------------
+    valor_consumo = energia_consumida * tarifa_consumo
+    valor_geracao = energia_injetada * tarifa_geracao
+    te_tusd_total = energia_consumida * tarifa_consumo
+
+    # Valor total da conta
+    valor_total = float(root.findtext(".//n:total/n:vNF", "0", ns))
+
+    # -----------------------------
+    # Dias do período
+    # -----------------------------
+    dias_periodo = None
+    if dMedAnt and dMedAtu:
+        try:
+            d1 = datetime.fromisoformat(dMedAnt)
+            d2 = datetime.fromisoformat(dMedAtu)
+            dias_periodo = (d2 - d1).days
+        except:
+            dias_periodo = None
+
+    # -----------------------------
+    # Retorno final
+    # -----------------------------
     return {
-        "uc": uc,
-        "energia_consumida": round(energia_consumida, 2),
-        "energia_injetada": round(energia_injetada, 2),
-        "tarifa_base": round(tarifa_base, 6),
-        "tarifa_real": round(tarifa_real, 6),
-        "tarifa_paga": round(tarifa_paga, 6),
-        "valor_total": round(valor_total, 2),
-        "valor_bandeiras": round(bandeiras_valor, 2),
-        "iluminacao_publica": round(iluminacao_publica, 2),
-        "compensacoes": round(compensacoes, 2),
-        "te_tusd": round(te_tusd_valor, 2),
-        "data_vencimento": data_venc,
-        "ultima_leitura": ultima_leitura,
-        "proxima_leitura": proxima_leitura,
+        "energia_consumida": energia_consumida,
+        "energia_injetada": energia_injetada,
+
+        "consumo_tusd": consumo_tusd,
+        "consumo_te": consumo_te,
+        "injetada_tusd": injetada_tusd,
+        "injetada_te": injetada_te,
+
+        "tarifa_consumo": tarifa_consumo,
+        "tarifa_geracao": tarifa_geracao,
+
+        "valor_consumo": valor_consumo,
+        "valor_geracao": valor_geracao,
+        "te_tusd_total": te_tusd_total,
+
+        "valor_total": valor_total,
+        "valor_bandeiras": valor_bandeiras,
+        "iluminacao_publica": iluminacao_publica,
+        "compensacoes": compensacoes,
+
+        "data_vencimento": data_vencimento,
+        "ultima_leitura": dMedAnt,
+        "proxima_leitura": dProxLeitura,
         "dias_periodo": dias_periodo,
-        "dias_bandeira": dias_bandeira,
-        "nf3e_raw": {  # JSON estruturado (sem XML bruto)
-            "competencia": competencia,
-            "uc": uc,
-            "valor_total": valor_total,
-            "energia_consumida": energia_consumida,
-            "energia_injetada": energia_injetada,
-        },
+        "dias_bandeira": None,  # não disponível no XML
+
+        "saldo_credito_anterior": saldo_credito_anterior,
+        "credito_expirado": credito_expirado,
+        "saldo_credito_atual": saldo_credito_atual,
     }

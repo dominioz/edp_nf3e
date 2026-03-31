@@ -1,9 +1,8 @@
 import logging
 import voluptuous as vol
-
 import homeassistant.helpers.config_validation as cv
+
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 
 from .const import (
@@ -23,18 +22,15 @@ from .util import (
     connect_imap,
     search_recent_emails,
     extract_xml_from_email,
-    extract_uc_from_xml,
-    normalize_uc,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------
-# 🔥 CONFIG FLOW PRINCIPAL
-# ---------------------------------------------------------
 class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+    """Fluxo de configuração da integração EDP NF3e."""
+
+    VERSION = 2
 
     def __init__(self):
         self.imap_server = None
@@ -44,9 +40,9 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.remetente = None
         self.detected_ucs = []
 
-    # -----------------------------------------------------
-    # 🟦 Etapa 1 — Dados IMAP
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
+    # PASSO 1 — Dados IMAP
+    # ---------------------------------------------------------
     async def async_step_user(self, user_input=None) -> FlowResult:
         errors = {}
 
@@ -57,8 +53,8 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             self.folder = user_input[CONF_FOLDER]
             self.remetente = user_input[CONF_REMETENTE]
 
-            # Testa conexão e detecta UCs
             ok = await self._async_detect_ucs()
+
             if not ok:
                 errors["base"] = "imap_error"
             else:
@@ -76,10 +72,12 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
-    # -----------------------------------------------------
-    # 🔍 Detecta UCs automaticamente
-    # -----------------------------------------------------
-    async def _async_detect_ucs(self):
+    # ---------------------------------------------------------
+    # Detecta automaticamente as UCs
+    # ---------------------------------------------------------
+    async def _async_detect_ucs(self) -> bool:
+        _LOGGER.info("Testando IMAP e detectando UCs…")
+
         try:
             mail = await self.hass.async_add_executor_job(
                 connect_imap,
@@ -89,7 +87,7 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self.folder,
             )
         except Exception as e:
-            _LOGGER.error("Erro ao conectar ao IMAP: %s", e)
+            _LOGGER.error("Erro IMAP: %s", e)
             return False
 
         try:
@@ -102,7 +100,6 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
             ucs = set()
 
-            # Varre e-mails do mais recente para o mais antigo
             for email_id in reversed(email_ids):
                 xml_text = await self.hass.async_add_executor_job(
                     extract_xml_from_email, mail, email_id
@@ -110,13 +107,14 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not xml_text:
                     continue
 
-                uc = extract_uc_from_xml(xml_text)
-                if uc:
-                    ucs.add(uc)
+                # Extrai UC do XML
+                import re
+                match = re.search(r"<idAcesso>(\d+)</idAcesso>", xml_text)
+                if match:
+                    ucs.add(match.group(1))
 
             self.detected_ucs = sorted(list(ucs))
-            _LOGGER.debug("UCs detectadas: %s", self.detected_ucs)
-
+            _LOGGER.info("UCs detectadas: %s", self.detected_ucs)
             return True
 
         finally:
@@ -125,9 +123,9 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except:
                 pass
 
-    # -----------------------------------------------------
-    # 🟦 Etapa 2 — Seleção de UCs
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
+    # PASSO 2 — Seleção das UCs
+    # ---------------------------------------------------------
     async def async_step_select_ucs(self, user_input=None) -> FlowResult:
         errors = {}
 
@@ -135,21 +133,17 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             selected = user_input.get(CONF_UCS, [])
             extra = user_input.get(CONF_EXTRA_UC)
 
-            # Normaliza UC manual
             if extra:
-                extra_norm = normalize_uc(extra)
-                if not extra_norm:
-                    errors["base"] = "invalid_uc"
+                if extra.isdigit():
+                    selected.append(extra)
                 else:
-                    selected.append(extra_norm)
+                    errors["base"] = "invalid_uc"
 
-            # Remove duplicadas
             selected = sorted(list(set(selected)))
 
             if not selected:
                 errors["base"] = "no_uc_selected"
             else:
-                # Criar ID único baseado no e-mail
                 await self.async_set_unique_id(self.email)
                 self._abort_if_unique_id_configured()
 
@@ -165,16 +159,13 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
-        # Schema dinâmico
         schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_UCS,
-                    default=self.detected_ucs,
-                ): cv.multi_select(self.detected_ucs),
+                vol.Optional(CONF_UCS, default=self.detected_ucs): cv.multi_select(self.detected_ucs),
                 vol.Optional(CONF_EXTRA_UC): str,
             }
         )
+
         return self.async_show_form(
             step_id="select_ucs",
             data_schema=schema,
@@ -183,58 +174,53 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 # ---------------------------------------------------------
-# 🔧 OPTIONS FLOW
+# FLUXO DE OPÇÕES
 # ---------------------------------------------------------
 class EdpNf3eOptionsFlow(config_entries.OptionsFlow):
+    """Fluxo de opções da integração."""
+
     def __init__(self, entry):
         self.entry = entry
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(self, user_input=None) -> FlowResult:
         errors = {}
 
         if user_input is not None:
-            # Normaliza UC manual
-            extra = user_input.get(CONF_EXTRA_UC)
             ucs = user_input.get(CONF_UCS, [])
+            extra = user_input.get(CONF_EXTRA_UC)
 
             if extra:
-                extra_norm = normalize_uc(extra)
-                if not extra_norm:
-                    errors["base"] = "invalid_uc"
+                if extra.isdigit():
+                    ucs.append(extra)
                 else:
-                    ucs.append(extra_norm)
+                    errors["base"] = "invalid_uc"
 
             ucs = sorted(list(set(ucs)))
 
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_FOLDER: user_input.get(CONF_FOLDER),
-                    CONF_REMETENTE: user_input.get(CONF_REMETENTE),
-                    CONF_UCS: ucs,
-                },
-            )
+            if not ucs:
+                errors["base"] = "no_uc_selected"
+            else:
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_FOLDER: user_input.get(CONF_FOLDER),
+                        CONF_REMETENTE: user_input.get(CONF_REMETENTE),
+                        CONF_UCS: ucs,
+                    },
+                )
 
-        # Schema
         schema = vol.Schema(
             {
-                vol.Optional(
-                    CONF_FOLDER,
-                    default=self.entry.data.get(CONF_FOLDER),
-                ): str,
-                vol.Optional(
-                    CONF_REMETENTE,
-                    default=self.entry.data.get(CONF_REMETENTE),
-                ): str,
-                vol.Optional(
-                    CONF_UCS,
-                    default=self.entry.data.get(CONF_UCS),
-                ): cv.multi_select(self.entry.data.get(CONF_UCS)),
+                vol.Optional(CONF_FOLDER, default=self.entry.data.get(CONF_FOLDER)): str,
+                vol.Optional(CONF_REMETENTE, default=self.entry.data.get(CONF_REMETENTE)): str,
+                vol.Optional(CONF_UCS, default=self.entry.data.get(CONF_UCS)): cv.multi_select(
+                    self.entry.data.get(CONF_UCS)
+                ),
                 vol.Optional(CONF_EXTRA_UC): str,
             }
         )
 
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
 
 
 async def async_get_options_flow(config_entry):
