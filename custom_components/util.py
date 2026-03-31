@@ -1,4 +1,3 @@
-import os
 import imaplib
 import email
 from email.header import decode_header
@@ -91,10 +90,10 @@ def extract_xml_from_email(mail, email_id):
 
         try:
             return xml_bytes.decode("utf-8", errors="ignore")
-        except Exception:
+        except:
             try:
                 return xml_bytes.decode("latin-1", errors="ignore")
-            except Exception:
+            except:
                 continue
 
     return None
@@ -112,30 +111,6 @@ def extract_uc_from_xml(xml_text: str):
             return normalize_uc(id_acesso.text)
     except Exception:
         pass
-    return None
-
-
-# ---------------------------------------------------------
-# 💾 Persistência do último XML
-# ---------------------------------------------------------
-def save_last_xml(xml_text: str, path: str):
-    """Salva o último XML válido em disco."""
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(xml_text)
-    except Exception:
-        pass
-
-
-def load_last_xml(path: str):
-    """Carrega o último XML salvo, se existir."""
-    if os.path.exists(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception:
-            return None
     return None
 
 
@@ -175,7 +150,7 @@ def parse_nf3e(xml_text: str):
         if comp is not None and dias is not None and comp.text == competencia:
             try:
                 dias_periodo = int(dias.text)
-            except Exception:
+            except:
                 dias_periodo = None
             break
 
@@ -187,53 +162,31 @@ def parse_nf3e(xml_text: str):
     compensacoes = 0.0
     bandeiras_valor = 0.0  # não identificado nos XMLs enviados
 
-    # Tarifas individuais
-    tusd_fornecida = None
-    te_fornecida = None
-    tusd_injetada = None
-    te_injetada = None
-
-    # Loop dos itens
     for det in root.findall(".//n:NFdet/n:det", NS):
         xprod = det.find(".//n:detItem/n:prod/n:xProd", NS)
         q = det.find(".//n:detItem/n:prod/n:qFaturada", NS)
         vprod = det.find(".//n:detItem/n:prod/n:vProd", NS)
-        vitem = det.find(".//n:detItem/n:prod/n:vItem", NS)
         cprod = det.find(".//n:detItem/n:prod/n:cProd", NS)
 
         xprod = xprod.text.upper() if xprod is not None and xprod.text else ""
         q = float(q.text) if q is not None and q.text else 0.0
         vprod = float(vprod.text) if vprod is not None and vprod.text else 0.0
-        vitem = float(vitem.text) if vitem is not None and vitem.text else 0.0
         cprod = cprod.text if cprod is not None else ""
 
-        # Energia consumida
         if "CONSUMO" in xprod and "INJETADA" not in xprod:
             energia_consumida += q
             te_tusd_valor += vprod
 
-            if "TUSD" in xprod:
-                tusd_fornecida = vitem
-            if "TE" in xprod:
-                te_fornecida = vitem
-
-        # Energia injetada
         if "INJETADA" in xprod:
             energia_injetada += q
 
-            if "TUSD" in xprod:
-                tusd_injetada = vitem
-            if "TE" in xprod:
-                te_injetada = vitem
-
-        # Outros itens
         if "ILUMINAÇÃO PÚBLICA" in xprod:
             iluminacao_publica += vprod
 
         if cprod == "ACCMNT" or "DEDUÇÕES E COMPENSAÇÕES" in xprod:
             compensacoes += vprod
 
-    # Tarifas agregadas
+    # Tarifas
     tarifa_base = te_tusd_valor / energia_consumida if energia_consumida else 0
     tarifa_real = (te_tusd_valor + bandeiras_valor) / energia_consumida if energia_consumida else 0
     tarifa_paga = valor_total / energia_consumida if energia_consumida else 0
@@ -257,15 +210,7 @@ def parse_nf3e(xml_text: str):
         "proxima_leitura": proxima_leitura,
         "dias_periodo": dias_periodo,
         "dias_bandeira": dias_bandeira,
-        "tarifas": {
-            "tusd_fornecida": tusd_fornecida,
-            "te_fornecida": te_fornecida,
-            "tusd_injetada": tusd_injetada,
-            "te_injetada": te_injetada,
-            "tarifa_consumida": (tusd_fornecida or 0) + (te_fornecida or 0),
-            "tarifa_injetada": (tusd_injetada or 0) + (te_injetada or 0),
-        },
-        "nf3e_raw": {
+        "nf3e_raw": {  # JSON estruturado (sem XML bruto)
             "competencia": competencia,
             "uc": uc,
             "valor_total": valor_total,
