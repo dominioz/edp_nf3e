@@ -1,113 +1,158 @@
 import logging
+import xml.etree.ElementTree as ET
+
 from datetime import timedelta
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
-from homeassistant.core import HomeAssistant
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
-
-from .const import (
-    DOMAIN,
-    CONF_IMAP_SERVER,
-    CONF_EMAIL,
-    CONF_PASSWORD,
-    CONF_FOLDER,
-    CONF_REMETENTE,
-    CONF_UCS,
-)
-from .util import (
-    connect_imap,
-    search_recent_emails,
-    extract_xml_from_email,
-    parse_nf3e,
-)
+from .const import DOMAIN
+from .util import connect_imap, search_recent_emails, extract_xml_from_email
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class EdpNf3eCoordinator(DataUpdateCoordinator):
-    """Coordinator responsável por atualizar os dados da NF3e."""
+    """Coordinator responsável por buscar e processar NF3e."""
 
-    def __init__(self, hass: HomeAssistant, entry: ConfigEntry):
-        self.hass = hass
-        self.entry = entry
-
-        self.imap_server = entry.data[CONF_IMAP_SERVER]
-        self.email = entry.data[CONF_EMAIL]
-        self.password = entry.data[CONF_PASSWORD]
-        self.folder = entry.data[CONF_FOLDER]
-        self.remetente = entry.data[CONF_REMETENTE]
-        self.ucs = entry.data[CONF_UCS]
-
+    def __init__(self, hass, entry):
         super().__init__(
             hass,
             _LOGGER,
-            name=DOMAIN,
+            name="EDP NF3e Coordinator",
             update_interval=timedelta(hours=6),
         )
 
+        self.entry = entry
+        self.imap_server = entry.data["imap_server"]
+        self.email = entry.data["email"]
+        self.password = entry.data["password"]
+        self.folder = entry.data["folder"]
+        self.remetente = entry.data["remetente"]
+        self.ucs = entry.data["ucs"]
+
+    # ---------------------------------------------------------
+    # Atualização principal
+    # ---------------------------------------------------------
     async def _async_update_data(self):
-        """Atualiza os dados de todas as UCs configuradas."""
-        try:
-            return await self.hass.async_add_executor_job(self._update_all_ucs)
-
-        except Exception as err:
-            raise UpdateFailed(f"Erro ao atualizar dados: {err}") from err
-
-    # ---------------------------------------------------------
-    # Atualiza todas as UCs
-    # ---------------------------------------------------------
-    def _update_all_ucs(self):
-        """Processa e retorna os dados de todas as UCs."""
         data = {}
 
         try:
-            mail = connect_imap(
+            mail = await self.hass.async_add_executor_job(
+                connect_imap,
                 self.imap_server,
                 self.email,
                 self.password,
                 self.folder,
             )
         except Exception as e:
-            _LOGGER.error("Erro ao conectar ao IMAP: %s", e)
-            return data
-
-        # Busca e-mails recentes
-        email_ids = search_recent_emails(mail, self.remetente, 360)
-
-        # Processa cada UC separadamente
-        for uc in self.ucs:
-            uc_data = self._process_uc(mail, email_ids, uc)
-            if uc_data:
-                data[uc] = uc_data
+            _LOGGER.error("Erro ao conectar IMAP: %s", e)
+            return {uc: None for uc in self.ucs}
 
         try:
-            mail.logout()
-        except:
-            pass
+            email_ids = await self.hass.async_add_executor_job(
+                search_recent_emails,
+                mail,
+                self.remetente,
+                40,
+            )
 
-        return data
+            for uc in self.ucs:
+                data[uc] = await self._async_process_uc(mail, email_ids, uc)
+
+            return data
+
+        finally:
+            try:
+                mail.logout()
+            except:
+                pass
 
     # ---------------------------------------------------------
     # Processa uma UC específica
     # ---------------------------------------------------------
-    def _process_uc(self, mail, email_ids, uc):
-        """Extrai a NF3e correspondente à UC e processa os dados."""
+    async def _async_process_uc(self, mail, email_ids, uc):
         for email_id in reversed(email_ids):
-            xml_text = extract_xml_from_email(mail, email_id)
+            xml_text = await self.hass.async_add_executor_job(
+                extract_xml_from_email, mail, email_id
+            )
+
             if not xml_text:
                 continue
 
-            # Verifica se o XML pertence à UC desejada
-            if uc not in xml_text:
-                continue
-
             try:
-                parsed = parse_nf3e(xml_text)
-                _LOGGER.info("NF3e processada para UC %s", uc)
-                return parsed
+                root = ET.fromstring(xml_text)
+                ns = {"n": "http://www.portalfiscal.inf.br/nf3e"}
+
+                id_acesso = root.find(".//n:idAcesso", ns)
+                if id_acesso is None or id_acesso.text.strip() != uc:
+                    continue
+
+                return self._parse_nf3e(root, ns)
 
             except Exception as e:
-                _LOGGER.error("Erro ao processar NF3e da UC %s: %s", uc, e)
+                _LOGGER.error("Erro ao processar XML: %s", e)
 
-        _LOGGER.warning("Nenhuma NF3e encontrada para UC %s", uc)
         return None
+
+    # ---------------------------------------------------------
+    # Parser completo da NF3e
+    # ---------------------------------------------------------
+    def _parse_nf3e(self, root, ns):
+        try:
+            dados = {}
+
+            # Datas
+            dados["ultima_leitura"] = self._get(root, ".//n:dMedAnt", ns)
+            dados["proxima_leitura"] = self._get(root, ".//n:dProxLeitura", ns)
+            dados["data_vencimento"] = self._get(root, ".//n:dVencFat", ns)
+
+            # Energia
+            dados["energia_consumida"] = float(self._get(root, ".//n:qFaturada", ns, item="CONSUMO"))
+            dados["energia_injetada"] = float(self._get(root, ".//n:qFaturada", ns, item="INJETADA"))
+
+            # Tarifas reais (vItem)
+            dados["consumo_tusd"] = float(self._get(root, ".//n:vItem", ns, item="CONSUMO TUSD"))
+            dados["consumo_te"] = float(self._get(root, ".//n:vItem", ns, item="CONSUMO TE"))
+            dados["injetada_tusd"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA TUSD"))
+            dados["injetada_te"] = float(self._get(root, ".//n:vItem", ns, item="INJETADA TE"))
+
+            # Tarifas totais
+            dados["tarifa_consumo"] = dados["consumo_tusd"] + dados["consumo_te"]
+            dados["tarifa_geracao"] = dados["injetada_tusd"] + dados["injetada_te"]
+
+            # Valores
+            dados["valor_consumo"] = dados["energia_consumida"] * dados["tarifa_consumo"]
+            dados["valor_geracao"] = dados["energia_injetada"] * dados["tarifa_geracao"]
+
+            dados["te_tusd_total"] = dados["valor_consumo"] + dados["valor_geracao"]
+
+            dados["iluminacao_publica"] = float(self._get(root, ".//n:vItem", ns, item="ILUMINAÇÃO"))
+            dados["compensacoes"] = float(self._get(root, ".//n:vItem", ns, item="COMPENSAÇÕES"))
+
+            dados["valor_total"] = float(self._get(root, ".//n:vNF", ns))
+
+            # Créditos GD
+            dados["saldo_credito_anterior"] = float(self._get(root, ".//n:vSaldAnt", ns))
+            dados["credito_expirado"] = float(self._get(root, ".//n:vCredExpirado", ns))
+            dados["saldo_credito_atual"] = float(self._get(root, ".//n:vSaldAtual", ns))
+
+            return dados
+
+        except Exception as e:
+            _LOGGER.error("Erro no parser NF3e: %s", e)
+            return None
+
+    # ---------------------------------------------------------
+    # Helper para extrair valores
+    # ---------------------------------------------------------
+    def _get(self, root, path, ns, item=None):
+        if item:
+            for det in root.findall(".//n:det", ns):
+                xprod = det.find(".//n:xProd", ns)
+                if xprod is not None and item.upper() in xprod.text.upper():
+                    val = det.find(path.replace(".//n:", ".//n:"), ns)
+                    if val is not None:
+                        return val.text
+            return "0"
+
+        node = root.find(path, ns)
+        return node.text if node is not None else "0"

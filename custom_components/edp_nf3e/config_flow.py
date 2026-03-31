@@ -1,6 +1,7 @@
 import logging
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
+import xml.etree.ElementTree as ET
 
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
@@ -73,7 +74,7 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     # ---------------------------------------------------------
-    # Detecta automaticamente as UCs
+    # Detecta automaticamente as UCs (CORRIGIDO)
     # ---------------------------------------------------------
     async def _async_detect_ucs(self) -> bool:
         _LOGGER.info("Testando IMAP e detectando UCs…")
@@ -107,11 +108,23 @@ class EdpNf3eConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not xml_text:
                     continue
 
-                # Extrai UC do XML
-                import re
-                match = re.search(r"<idAcesso>(\d+)</idAcesso>", xml_text)
-                if match:
-                    ucs.add(match.group(1))
+                # -------------------------------
+                # CORREÇÃO: leitura com namespace
+                # -------------------------------
+                try:
+                    root = ET.fromstring(xml_text)
+                    ns = {"n": "http://www.portalfiscal.inf.br/nf3e"}
+
+                    id_acesso = root.find(".//n:idAcesso", ns)
+
+                    if id_acesso is not None and id_acesso.text:
+                        uc = id_acesso.text.strip()
+                        if uc.isdigit():
+                            ucs.add(uc)
+                            _LOGGER.info("UC detectada automaticamente: %s", uc)
+
+                except Exception as e:
+                    _LOGGER.error("Erro ao processar XML para detectar UC: %s", e)
 
             self.detected_ucs = sorted(list(ucs))
             _LOGGER.info("UCs detectadas: %s", self.detected_ucs)
